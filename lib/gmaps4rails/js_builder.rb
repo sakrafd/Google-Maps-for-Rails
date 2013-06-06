@@ -1,11 +1,11 @@
 module Gmaps4rails
   class JsBuilder
-    
+
     DEFAULT_MAP_ID = "map"
     DATA_KEYS      = [:markers, :polylines, :polygons, :circles, :direction, :kml]
 
     #the 'option_hash' must have the following structure
-    #{  
+    #{
     #   :map_options => hash,
     #   :markers     => { :data => json, :options => hash },
     #   :polylines   => { :data => json, :options => hash },
@@ -14,7 +14,7 @@ module Gmaps4rails
     #   :direction   => { :data => hash, :options => hash },
     #   :kml         => { :data => json, :options => hash }
     #}
-    #should be with only symbol keys or with indifferent access    
+    #should be with only symbol keys or with indifferent access
     def initialize(option_hash)
       @js   = Array.new
       @hash = option_hash
@@ -23,9 +23,9 @@ module Gmaps4rails
     def create_js
       @js << "#{gmap_id} = new #{ map_constructor };"
       @js << "Gmaps.#{js_function_name} = function() {"
-      
+
       process_map_options
-      
+
       @js << "#{gmap_id}.initialize();"
 
       process_data
@@ -34,7 +34,7 @@ module Gmaps4rails
       @js << "#{gmap_id}.callback();"
       @js << "};"
       @js << "Gmaps.oldOnload = window.onload;\n window.onload = function() { Gmaps.triggerOldOnload(); Gmaps.loadMaps(); };" if load_map?
-      
+
       @js * ("\n")
     end
 
@@ -42,7 +42,7 @@ module Gmaps4rails
       return unless map_options
       map_options.each do |option_key, option_value|
         next if [:class, :container_class].include? option_key.to_sym
-        case option_key.to_sym 
+        case option_key.to_sym
         when :bounds, :raw #particular case, render the content unescaped
           @js << "#{gmap_id}.map_options.#{option_key} = #{option_value};"
         else
@@ -57,19 +57,19 @@ module Gmaps4rails
         @js.concat datum.create_js
       end
     end
-    
+
     def map_options
       @hash[:map_options]
     end
-    
+
     def data
       @hash.select{|key, value| DATA_KEYS.include?(key.to_sym) }
     end
-    
+
     def load_map?
       @hash[:last_map].nil? || @hash[:last_map] == true
     end
-    
+
     def js_function_name
       "load_" + map_id
     end
@@ -77,43 +77,43 @@ module Gmaps4rails
     def gmap_id
       @gmap_id ||= "Gmaps." + map_id
     end
-    
+
     def map_id
       @map_id ||= map_options.try(:[],:id) || DEFAULT_MAP_ID
     end
-    
+
     def map_constructor
       map_options.try(:[],:provider) ? "Gmaps4Rails#{map_options[:provider].capitalize}()" : "Gmaps4RailsGoogle()"
     end
-    
+
     class Datum
       # example:
       # - name: :markers
       # - hash: { :data => json, :options => hash }
       extend Forwardable
       def_delegators :@element_info, :options, :data
-      
+
       def initialize(gmap_id, name, hash)
         @gmap_id, @name, @js = gmap_id, name, Array.new
         @element_info = OpenStruct.new(hash)
       end
-      
+
       def create_js
         if @name.to_sym == :direction
           create_direction_js
-        else  
+        else
           create_standard_js
         end
       end
-      
+
       def create_standard_js
         set_configuration_variables
         @js << "#{@gmap_id}.add#{@name.capitalize}(#{data});"
       end
 
       def create_direction_js
-        @js << "#{@gmap_id}.direction_conf.origin = '#{data["from"]}';"
-        @js << "#{@gmap_id}.direction_conf.destination = '#{data["to"]}';"
+        @js << "#{@gmap_id}.direction_conf.origin = #{get_point_variables(data["from"])};"
+        @js << "#{@gmap_id}.direction_conf.destination = #{get_point_variables(data["to"])};"
 
         set_direction_variables
 
@@ -127,17 +127,22 @@ module Gmaps4rails
                    "#{@gmap_id}.#{@name}_conf.#{option_key} = #{option_value};"
                  else
                    "#{@gmap_id}.#{@name}_conf.#{option_key} = #{option_value.to_json};"
-                 end	
+                 end
         end
       end
 
       def set_direction_variables
         return unless options
+        use_latlng = options.delete(:use_latlng)
         options.each do |option_key, option_value|
           if option_key.to_sym == :waypoints
             waypoints = Array.new
             option_value.each do |waypoint|
-              waypoints << { "location" => waypoint, "stopover" => true }.to_json
+              waypoints << if use_latlng
+                             "{\"location\": #{get_point_variables(waypoint)},\"stopover\":true}"
+                           else
+                             { "location" => waypoint, "stopover" => true }.to_json
+                           end
             end
             @js << "#{@gmap_id}.direction_conf.waypoints = [#{waypoints * (",")}];"
           else
@@ -145,10 +150,19 @@ module Gmaps4rails
           end
         end
       end
-      
+
+      def get_point_variables(data)
+        begin
+          data = JSON.parse(data)
+          if data.is_a?(Array)
+            d = data.first
+            "new google.maps.LatLng(#{d['lat']}, #{d['lng']})"
+          end
+        rescue JSON::ParserError
+          "\'#{data}\'"
+        end
+      end
+
     end
   end
-
-
 end
-  
